@@ -1,0 +1,27 @@
+diff --git a/apps/server/app/models/comment.rb b/apps/server/app/models/comment.rb
+index 750489c..e28049c 100644
+--- a/apps/server/app/models/comment.rb
++++ b/apps/server/app/models/comment.rb
+@@ -1,5 +1,7 @@
+ class Comment < ApplicationRecord
+   belongs_to :post
+ 
++  normalizes :body, with: ->(body) { body.strip }
++
+   validates :body, presence: true, length: { maximum: 2000 }
+ end
+diff --git a/apps/server/spec/models/comment_spec.rb b/apps/server/spec/models/comment_spec.rb
+index 3955815..3c198c1 100644
+--- a/apps/server/spec/models/comment_spec.rb
++++ b/apps/server/spec/models/comment_spec.rb
+@@ -11,6 +11,10 @@ RSpec.describe Comment do
+     expect(post_record.comments.build(body: "x" * 2001)).not_to be_valid
+   end
+ 
++  it "removes whitespace around the body" do
++    expect(post_record.comments.create!(body: "  Nice post!\n").body).to eq("Nice post!")
++  end
++
+   it "belongs to a post" do
+     expect(Comment.new(body: "Orphan")).not_to be_valid
+   end
