@@ -7,8 +7,8 @@
   "scripts": {
     "renderer": "rm -rf renderer && bun run --cwd ../web build && cp -r ../web/dist renderer",
     "start": "bun run renderer && install-electron && electron .",
-    "build": "bun run renderer && electron-builder --dir",
-    "package": "electron-builder"
+    "pack": "bun run renderer && electron-builder --dir",
+    "dist": "bun run renderer && electron-builder"
   },
   "devDependencies": {
     "electron": "44.7.2",

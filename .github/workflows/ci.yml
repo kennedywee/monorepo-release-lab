@@ -129,7 +129,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/desktop build
+      - run: bun run --cwd apps/desktop pack
 
   server-image:
     name: Build server container
