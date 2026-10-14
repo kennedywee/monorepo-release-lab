@@ -45,9 +45,8 @@ echo "== 4. Fix the bug and run the relevant checks"
 run git apply "$repo/exercises/hotfix/fix-comment-whitespace.patch"
 (
   cd apps/server
-  # Reuse the gems installed for the main checkout.
-  export BUNDLE_GEMFILE="$PWD/Gemfile"
-  run bin/rails db:test:prepare >/dev/null
+  echo "\$ bin/rails db:test:prepare"
+  bin/rails db:test:prepare >/dev/null
   run bundle exec rspec spec/models/comment_spec.rb spec/requests/comments_spec.rb
 )
 run git commit -q -am "Strip whitespace around comment bodies"
