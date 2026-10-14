@@ -121,7 +121,7 @@ jobs:
         run: |
           mkdir -p status
           if [ -n "$DIGEST" ]; then
-            jq -n --arg d "$DIGEST" '{app: "server", publication: {status: "published", detail: ("Container image " + $d + ". Not deployed.")}}' > status/server-publication.json
+            jq -n --arg d "$DIGEST" '{app: "server", publication: {status: "published", detail: ("Pushed " + $d + ". The tar is a workflow artifact, not a release asset. Not deployed.")}}' > status/server-publication.json
           else
             jq -n '{app: "server", publication: {status: "failed", detail: "Image push to GHCR failed. See the job log."}}' > status/server-publication.json
           fi

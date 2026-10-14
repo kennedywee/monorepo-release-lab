@@ -39,11 +39,12 @@ check() {
 rails_contract() { (cd apps/server && bundle exec rspec spec/requests); }
 typecheck() { bun run --cwd "apps/$1" typecheck; }
 
-echo "Step 0. Baseline on main"
+echo "Step 1. Baseline: mobile reads post.title"
+grep -n "post.title\|post.data.title" apps/mobile/app/index.tsx "apps/mobile/app/posts/[id].tsx" | sed 's/^/         /'
 check pass "Rails contract specs" rails_contract
 check pass "mobile typecheck" typecheck mobile
 
-echo "Step 1-2. Rails stops sending title; the contract still requires it"
+echo "Step 2. Rails stops sending title, but the contract still requires it"
 git apply "$here/01-response-drops-title.patch"
 check fail "Rails contract specs" rails_contract
 
@@ -63,7 +64,7 @@ git apply "$here/04-fix-web-and-store.patch"
 check pass "web typecheck (desktop renderer)" typecheck web
 check pass "store typecheck" typecheck store
 
-echo "Step 5. Compare the proposed contract with the last stable contract"
+echo "Extra. Compare the proposed contract with the last stable contract"
 # In CI the base is the contract at the last stable tag: git show v1.0.0:apps/server/openapi.yaml
 # Here the base is the committed contract (HEAD), which stands in for the last stable release.
 git show HEAD:apps/server/openapi.yaml >/tmp/release-lab-stable-openapi.yaml
