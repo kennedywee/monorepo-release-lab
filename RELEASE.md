@@ -244,7 +244,53 @@ What each tag identifies:
 `bash exercises/hotfix/demo.sh` runs this scenario in a throwaway clone. Real output (commit hashes change on each run):
 
 ```text
-HOTFIX_OUTPUT
+== 1. Production is v1.0.0
+$ git tag -a v1.0.0 -m Release v1.0.0
+
+== 2. main gets newer work that is not ready to ship
+$ git commit -q -am Add teaser for unfinished post tags feature
+
+== 3. Create the hotfix branch from the production tag, not from main
+$ git switch -q -c hotfix/v1.0.1 v1.0.0
+
+== 4. Fix the bug and run the relevant checks
+$ git apply /home/kennedywee/Work/kennedywee/monorepo-release-lab/exercises/hotfix/fix-comment-whitespace.patch
+$ bin/rails db:test:prepare
+$ bundle exec rspec spec/models/comment_spec.rb spec/requests/comments_spec.rb
+.........
+
+Finished in 0.05791 seconds (files took 0.41196 seconds to load)
+9 examples, 0 failures
+
+$ git commit -q -am Strip whitespace around comment bodies
+
+== 5. Tag the corrected commit
+$ git tag -a v1.0.1 -m Release v1.0.1
+In a real repository: git push origin hotfix/v1.0.1 v1.0.1
+That push starts the normal Release workflow for v1.0.1. (Not run in this demo.)
+
+== 6. Bring the fix back into main
+$ git switch -q main
+$ git merge -q --no-ff hotfix/v1.0.1 -m Merge hotfix v1.0.1 into main
+
+== Result
+*   5a4c750 Merge hotfix v1.0.1 into main (HEAD -> main)
+|\  
+| * 3047efe Strip whitespace around comment bodies (tag: v1.0.1, hotfix/v1.0.1)
+* | 53d1139 Add teaser for unfinished post tags feature
+|/  
+* d2d7286 Show only the hotfix commits in the demo graph (tag: v1.0.0)
+
+v1.0.0 identifies commit d2d7286: Show only the hotfix commits in the demo graph
+v1.0.1 identifies commit 3047efe: Strip whitespace around comment bodies
+main is at commit 5a4c750: Merge hotfix v1.0.1 into main
+
+OK: v1.0.1 does not contain the unreleased main commit 53d1139.
+OK: main contains the v1.0.1 fix.
+Files that differ between v1.0.0 and v1.0.1:
+   apps/server/app/models/comment.rb       | 2 ++
+   apps/server/spec/models/comment_spec.rb | 4 ++++
+   2 files changed, 6 insertions(+)
 ```
 
 ## Server migration and deployment sequence
