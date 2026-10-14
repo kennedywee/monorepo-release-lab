@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: Release Lab Blog API
+  version: 1.0.0
+  description: |
+    The HTTP contract between the Rails server and every client (web, store, desktop, mobile).
+    Rails request specs validate real responses against this file.
+    TypeScript types in packages/api/src/schema.d.ts are generated from this file.
+servers:
+  - url: http://localhost:3000
+paths:
+  /posts:
+    get:
+      operationId: listPosts
+      summary: List posts, newest first
+      responses:
+        "200":
+          description: All posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+    post:
+      operationId: createPost
+      summary: Create a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostInput"
+      responses:
+        "201":
+          description: The created post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /posts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    get:
+      operationId: getPost
+      summary: Show one post
+      responses:
+        "200":
+          description: The post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updatePost
+      summary: Update a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostInput"
+      responses:
+        "200":
+          description: The updated post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /posts/{post_id}/comments:
+    parameters:
+      - name: post_id
+        in: path
+        required: true
+        schema:
+          type: integer
+    get:
+      operationId: listComments
+      summary: List comments for a post, oldest first
+      responses:
+        "200":
+          description: Comments for the post
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Comment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createComment
+      summary: Add a comment to a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentInput"
+      responses:
+        "201":
+          description: The created comment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+components:
+  schemas:
+    Post:
+      type: object
+      additionalProperties: false
+      required: [id, title, body, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PostInput:
+      type: object
+      additionalProperties: false
+      required: [title, body]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        body:
+          type: string
+    Comment:
+      type: object
+      additionalProperties: false
+      required: [id, post_id, body, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+        post_id:
+          type: integer
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CommentInput:
+      type: object
+      additionalProperties: false
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+    ValidationErrors:
+      type: object
+      additionalProperties: false
+      required: [errors]
+      properties:
+        errors:
+          type: object
+          description: Field name mapped to a list of messages.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+  responses:
+    NotFound:
+      description: The record does not exist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationFailed:
+      description: The input is not valid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationErrors"

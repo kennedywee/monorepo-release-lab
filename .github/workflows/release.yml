@@ -1,0 +1,338 @@
+# Release: runs when a version tag is pushed.
+#   v1.1.0-rc.1  -> release candidate (GitHub pre-release, candidate channels only)
+#   v1.1.0       -> stable release
+# One tag covers every app. Every job checks out the exact tagged commit (github.sha).
+# This workflow builds and records artifacts. It never deploys to production.
+# Deployment is the separate, manually approved Deploy workflow.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+  RELEASE_SHA: ${{ github.sha }}
+
+jobs:
+  prepare:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      channel: ${{ steps.tag.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Show candidates for this commit
+        if: ${{ !contains(github.ref_name, '-rc.') }}
+        run: |
+          candidates=$(git tag --points-at "$RELEASE_SHA" --list 'v*-rc.*' | tr '\n' ' ')
+          if [ -z "$candidates" ]; then
+            echo "::warning::No release candidate tag points at $RELEASE_SHA. This stable release was not tested as a candidate."
+          else
+            echo "Candidate tags on this commit: $candidates" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - id: tag
+        run: |
+          if ! echo "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'; then
+            echo "::error::Tag $RELEASE_TAG is not vX.Y.Z or vX.Y.Z-rc.N"
+            exit 1
+          fi
+          version="${RELEASE_TAG#v}"
+          if [[ "$version" == *-rc.* ]]; then channel=candidate; else channel=stable; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "Tag $RELEASE_TAG -> commit $RELEASE_SHA ($channel)" >> "$GITHUB_STEP_SUMMARY"
+
+  checks:
+    name: Checks
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
+  build-server:
+    name: Build server container
+    needs: [prepare, checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Build the image once
+        run: |
+          docker build apps/server \
+            -t "release-lab-server:$RELEASE_TAG" \
+            --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --label "org.opencontainers.image.revision=$RELEASE_SHA"
+          docker save "release-lab-server:$RELEASE_TAG" | gzip > "server-image-$RELEASE_TAG.tar.gz"
+      - name: Record status
+        run: |
+          mkdir -p status
+          file="server-image-$RELEASE_TAG.tar.gz"
+          jq -n --arg file "$file" --arg sha "$(sha256sum "$file" | cut -d' ' -f1)" \
+            '{app: "server", job: "build-server", build: "success", artifacts: [{file: $file, sha256: $sha}]}' > status/server.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-image
+          path: server-image-${{ env.RELEASE_TAG }}.tar.gz
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-server
+          path: status/
+
+  publish-server-image:
+    # Pushes the image built above. It does not rebuild, so the deployed image is the tested one.
+    name: Publish server image to GHCR
+    needs: [prepare, build-server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: server-image
+      - name: Push
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/release-lab-server:$RELEASE_TAG"
+          gunzip -c "server-image-$RELEASE_TAG.tar.gz" | docker load
+          docker tag "release-lab-server:$RELEASE_TAG" "$image"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$image"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Record status
+        if: always()
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p status
+          if [ -n "$DIGEST" ]; then
+            jq -n --arg d "$DIGEST" '{app: "server", publication: {status: "published", detail: ("Container image " + $d + ". Not deployed.")}}' > status/server-publication.json
+          else
+            jq -n '{app: "server", publication: {status: "failed", detail: "Image push to GHCR failed. See the job log."}}' > status/server-publication.json
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: status-server-publication
+          path: status/
+
+  build-web:
+    name: Build ${{ matrix.app }}
+    needs: [prepare, checks]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, store, marketing, docs, support]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/${{ matrix.app }} build
+      - name: Package once
+        # The API URL is read at runtime from config.js, so this one artifact serves every
+        # environment. The Deploy workflow replaces config.js; it never rebuilds.
+        run: |
+          dist="apps/${{ matrix.app }}/dist"
+          jq -n --arg tag "$RELEASE_TAG" --arg commit "$RELEASE_SHA" '{tag: $tag, commit: $commit}' > "$dist/version.json"
+          file="${{ matrix.app }}-$RELEASE_TAG.tar.gz"
+          tar -czf "$file" -C "$dist" .
+          mkdir -p status
+          jq -n --arg app "${{ matrix.app }}" --arg file "$file" --arg sha "$(sha256sum "$file" | cut -d' ' -f1)" \
+            '{app: $app, job: "build-web", build: "success", artifacts: [{file: $file, sha256: $sha}],
+              publication: {status: "not-configured", detail: "Static artifact only. Deploy with the Deploy workflow."}}' \
+            > "status/${{ matrix.app }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.app }}
+          path: ${{ matrix.app }}-${{ env.RELEASE_TAG }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-${{ matrix.app }}
+          path: status/
+
+  build-desktop:
+    # Packages the web artifact from build-web. It does not rebuild the renderer.
+    name: Package desktop (${{ matrix.platform }})
+    needs: [prepare, build-web]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux, os: ubuntu-latest, target: "--linux AppImage", glob: "*.AppImage" }
+          - { platform: macos, os: macos-latest, target: "--mac dmg", glob: "*.dmg" }
+          - { platform: windows, os: windows-latest, target: "--win nsis", glob: "*.exe" }
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Signing runs only when these secrets exist. Without them the package is unsigned.
+      CSC_LINK: ${{ secrets.DESKTOP_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_CSC_KEY_PASSWORD }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-web
+      - name: Use the released web build as the renderer
+        run: |
+          mkdir -p apps/desktop/renderer
+          tar -xzf "web-$RELEASE_TAG.tar.gz" -C apps/desktop/renderer
+      - name: Package
+        working-directory: apps/desktop
+        run: bunx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version=${{ needs.prepare.outputs.version }}
+      - name: Record status
+        run: |
+          mkdir -p status out
+          cp apps/desktop/release/${{ matrix.glob }} out/
+          file=$(cd out && ls)
+          signing="Unsigned. Signing secrets are not configured."
+          if [ -n "$CSC_LINK" ]; then signing="Signed with the configured certificate."; fi
+          jq -n --arg app "desktop-${{ matrix.platform }}" --arg file "$file" --arg sha "$(sha256sum "out/$file" | cut -d' ' -f1)" \
+            --arg version "${{ needs.prepare.outputs.version }}" --arg signing "$signing" \
+            '{app: $app, job: "build-desktop", build: "success", artifacts: [{file: $file, sha256: $sha}],
+              platformVersion: ("app version " + $version),
+              publication: {status: "not-configured", detail: ("Attached to the GitHub Release only. " + $signing)}}' \
+            > "status/desktop-${{ matrix.platform }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-${{ matrix.platform }}
+          path: out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-desktop-${{ matrix.platform }}
+          path: status/
+
+  build-mobile:
+    name: Build mobile
+    needs: [prepare, checks]
+    runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+      # Candidate tags use the candidate profile and channel. They never use production.
+      EAS_PROFILE: ${{ needs.prepare.outputs.channel == 'stable' && 'production' || 'candidate' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Export JavaScript bundles (always available, not installable)
+        run: |
+          bun run --cwd apps/mobile build
+          tar -czf "mobile-bundles-$RELEASE_TAG.tar.gz" -C apps/mobile/dist .
+      - name: Start EAS builds
+        id: eas
+        if: env.EXPO_TOKEN != '' && env.EAS_PROJECT_ID != ''
+        working-directory: apps/mobile
+        run: |
+          bunx eas-cli@24 build --platform all --profile "$EAS_PROFILE" --non-interactive --no-wait --json > ../../eas-builds.json
+          echo "ids=$(jq -r 'map(.platform + ":" + .id) | join(", ")' ../../eas-builds.json)" >> "$GITHUB_OUTPUT"
+      - name: Record status
+        env:
+          EAS_IDS: ${{ steps.eas.outputs.ids }}
+        run: |
+          mkdir -p status
+          file="mobile-bundles-$RELEASE_TAG.tar.gz"
+          if [ -n "$EAS_IDS" ]; then
+            publication=$(jq -n --arg ids "$EAS_IDS" --arg p "$EAS_PROFILE" \
+              '{status: "started", detail: ("EAS " + $p + " builds requested: " + $ids + ". Not submitted to stores.")}')
+          else
+            publication='{"status": "not-configured", "detail": "EXPO_TOKEN or EAS_PROJECT_ID is not set. No native binary was built."}'
+          fi
+          jq -n --arg file "$file" --arg sha "$(sha256sum "$file" | cut -d' ' -f1)" \
+            --arg version "${{ needs.prepare.outputs.version }}" --argjson publication "$publication" \
+            '{app: "mobile", job: "build-mobile", build: "success", artifacts: [{file: $file, sha256: $sha}],
+              platformVersion: ("store version " + ($version | split("-")[0]) + "; build number assigned by EAS"),
+              publication: $publication}' > status/mobile.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mobile
+          path: mobile-bundles-${{ env.RELEASE_TAG }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-mobile
+          path: status/
+
+  github-release:
+    name: Manifest and GitHub Release
+    needs: [prepare, checks, build-server, publish-server-image, build-web, build-desktop, build-mobile]
+    # Runs even when a build fails, so the manifest records the failure. It publishes only on full success.
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: status-*
+          path: release-out/status
+          merge-multiple: true
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          path: release-out/files
+          merge-multiple: true
+      - name: Collect changes since the last stable tag
+        run: |
+          previous=$(git tag --list 'v*' --sort=-v:refname --merged HEAD | grep -Ev -- '-' | grep -vx "$RELEASE_TAG" | head -n1 || true)
+          echo "PREVIOUS_TAG=$previous" >> "$GITHUB_ENV"
+          git log --pretty='- %s (%h)' ${previous:+$previous..}HEAD > release-out/changes.md
+      - name: Write manifest and notes
+        id: manifest
+        continue-on-error: true
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          CHANGES_FILE: release-out/changes.md
+        run: bun scripts/release-manifest.ts release-out/status release-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-manifest
+          path: |
+            release-out/release-manifest.json
+            release-out/release-notes.md
+      - name: Create the GitHub Release
+        if: steps.manifest.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+        run: |
+          args=(--verify-tag --title "$RELEASE_TAG" --notes-file release-out/release-notes.md)
+          # Candidates are GitHub pre-releases, so they never show as the latest stable release.
+          if [ "$CHANNEL" = candidate ]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" "${args[@]}" release-out/files/* release-out/release-manifest.json
+      - name: Stop if a build failed
+        if: steps.manifest.outcome != 'success'
+        run: |
+          echo "::error::At least one build failed. No GitHub Release was created. See the release-manifest artifact."
+          exit 1

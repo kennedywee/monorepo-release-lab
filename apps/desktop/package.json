@@ -1,0 +1,46 @@
+{
+  "name": "desktop",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Release Lab Staff desktop app. Wraps the web renderer.",
+  "main": "main.js",
+  "scripts": {
+    "renderer": "rm -rf renderer && bun run --cwd ../web build && cp -r ../web/dist renderer",
+    "start": "bun run renderer && install-electron && electron .",
+    "build": "bun run renderer && electron-builder --dir",
+    "package": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "example.release-lab.staff",
+    "productName": "Release Lab Staff",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "artifactName": "release-lab-staff-${version}-${os}-${arch}.${ext}"
+  }
+}

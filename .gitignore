@@ -1,0 +1,41 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# Rails
+apps/server/log/*
+!apps/server/log/.keep
+apps/server/tmp/*
+!apps/server/tmp/.keep
+!apps/server/tmp/pids/
+apps/server/tmp/pids/*
+!apps/server/tmp/pids/.keep
+apps/server/storage/*
+!apps/server/storage/.keep
+apps/server/.bundle
+apps/server/config/master.key
+
+# Expo
+apps/mobile/.expo/
+apps/mobile/dist/
+apps/mobile/ios/
+apps/mobile/android/
+
+# Electron
+apps/desktop/renderer/
+apps/desktop/release/
+
+# Local release work
+release-out/
+apps/mobile/expo-env.d.ts
+.metro-health-check*
+*.tsbuildinfo
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+*.pem

@@ -1,0 +1,18 @@
+diff --git a/apps/server/openapi.yaml b/apps/server/openapi.yaml
+index a2809ba..95df69c 100644
+--- a/apps/server/openapi.yaml
++++ b/apps/server/openapi.yaml
+@@ -125,12 +125,10 @@ components:
+     Post:
+       type: object
+       additionalProperties: false
+-      required: [id, title, body, created_at, updated_at]
++      required: [id, body, created_at, updated_at]
+       properties:
+         id:
+           type: integer
+-        title:
+-          type: string
+         body:
+           type: string
+         created_at:

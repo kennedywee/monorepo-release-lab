@@ -1,0 +1,88 @@
+# Mobile publication. Always started by a person, after the Release workflow.
+#
+#   update: send a JavaScript-only update with EAS Update. It reaches only installed
+#           builds with the same runtime version (fingerprint). Native changes need a new build.
+#   submit: upload an EAS build to the stores. Android goes to the internal track as a draft.
+#           iOS goes to App Store Connect / TestFlight. Neither reaches production users until
+#           someone releases it in Google Play Console or App Store Connect.
+#
+# Required setup (not done in this repository): EXPO_TOKEN secret, EAS_PROJECT_ID and API_URL
+# variables, store credentials in EAS, and GitHub environments "candidate" and "production".
+name: Mobile
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (for example v1.1.0 or v1.1.0-rc.1)
+        required: true
+        type: string
+      action:
+        description: What to do
+        required: true
+        type: choice
+        options: [update, submit]
+      channel:
+        description: EAS Update channel (update only)
+        required: true
+        type: choice
+        options: [candidate, production]
+      build_id:
+        description: EAS build ID to submit (submit only)
+        required: false
+        type: string
+      platform:
+        description: Store platform (submit only)
+        required: false
+        type: choice
+        options: [android, ios]
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  publish:
+    name: ${{ inputs.action }} ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    environment: ${{ (inputs.action == 'submit' || inputs.channel == 'production') && 'production' || 'candidate' }}
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+      EXPO_PUBLIC_API_URL: ${{ vars.API_URL }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Candidate tags never reach production
+        if: inputs.action == 'submit' || inputs.channel == 'production'
+        run: |
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::$TAG is not a stable tag. Use the candidate channel."
+            exit 1
+          fi
+      - name: Require EAS configuration
+        run: |
+          if [ -z "$EXPO_TOKEN" ] || [ -z "$EAS_PROJECT_ID" ] || [ -z "$EXPO_PUBLIC_API_URL" ]; then
+            echo "::error::NOT PUBLISHED. EXPO_TOKEN, EAS_PROJECT_ID, or API_URL is not configured."
+            exit 1
+          fi
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Show the runtime version of this commit
+        working-directory: apps/mobile
+        run: |
+          echo "Runtime version (fingerprint): $(bunx expo-updates fingerprint:generate --platform android | jq -r .hash)" >> "$GITHUB_STEP_SUMMARY"
+      - name: EAS Update (JavaScript only)
+        if: inputs.action == 'update'
+        working-directory: apps/mobile
+        run: bunx eas-cli@24 update --channel "${{ inputs.channel }}" --message "$TAG" --non-interactive
+      - name: Submit to the store (not released to users)
+        if: inputs.action == 'submit'
+        working-directory: apps/mobile
+        run: |
+          if [ -z "${{ inputs.build_id }}" ]; then echo "::error::build_id is required for submit"; exit 1; fi
+          bunx eas-cli@24 submit --platform "${{ inputs.platform }}" --profile production --id "${{ inputs.build_id }}" --non-interactive

@@ -1,0 +1,56 @@
+# PR preview: build every app for one open pull request, on demand.
+# Hosting is not configured, so the result is a set of temporary test artifacts
+# (kept 7 days), not a URL. Run them locally with the commands in RELEASE.md.
+# A preview is not a release: it has no tag and is never deployed by this workflow.
+name: PR preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+        type: number
+
+# The PR code may come from anyone. This workflow uses no secrets and only reads the repository.
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: Build preview for PR ${{ inputs.pr }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ inputs.pr }}/head
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Build web artifacts and mobile bundles
+        run: |
+          mkdir -p preview
+          for app in web store marketing docs support; do
+            bun run --cwd "apps/$app" build
+            tar -czf "preview/$app.tar.gz" -C "apps/$app/dist" .
+          done
+          bun run --cwd apps/mobile build
+          tar -czf preview/mobile-bundles.tar.gz -C apps/mobile/dist .
+      - name: Build server image
+        run: |
+          docker build -t "release-lab-server:pr-${{ inputs.pr }}" apps/server
+          docker save "release-lab-server:pr-${{ inputs.pr }}" | gzip > preview/server-image.tar.gz
+      - name: Describe the preview
+        run: |
+          {
+            echo "PR preview for #${{ inputs.pr }}"
+            echo "Commit: $(git rev-parse HEAD)"
+            echo "Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Not a release. Not deployed. Run locally with the PR preview steps in RELEASE.md."
+          } > preview/PREVIEW.txt
+          cat preview/PREVIEW.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-pr-${{ inputs.pr }}
+          path: preview/
+          retention-days: 7

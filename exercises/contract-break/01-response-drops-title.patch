@@ -1,0 +1,12 @@
+diff --git a/apps/server/app/controllers/posts_controller.rb b/apps/server/app/controllers/posts_controller.rb
+index 7bfeda0..a4bc46e 100644
+--- a/apps/server/app/controllers/posts_controller.rb
++++ b/apps/server/app/controllers/posts_controller.rb
+@@ -38,6 +38,6 @@ class PostsController < ApplicationController
+ 
+     # The response shape must match the Post schema in openapi.yaml.
+     def post_json(post)
+-      post.as_json(only: %i[id title body created_at updated_at])
++      post.as_json(only: %i[id body created_at updated_at])
+     end
+ end

@@ -1,0 +1,44 @@
+diff --git a/apps/store/src/router.tsx b/apps/store/src/router.tsx
+index fb2524e..6bb4850 100644
+--- a/apps/store/src/router.tsx
++++ b/apps/store/src/router.tsx
+@@ -37,7 +37,7 @@ function PostsPage() {
+         <article key={post.id}>
+           <h2>
+             <Link to="/posts/$postId" params={{ postId: String(post.id) }}>
+-              {post.title}
++              Post #{post.id}
+             </Link>
+           </h2>
+           <small>{new Date(post.created_at).toLocaleDateString()}</small>
+@@ -95,7 +95,7 @@ function PostPage() {
+ 
+   return (
+     <article>
+-      <h1>{post.data.title}</h1>
++      <h1>Post #{post.data.id}</h1>
+       <small>{new Date(post.data.created_at).toLocaleDateString()}</small>
+       <p style={{ whiteSpace: "pre-wrap" }}>{post.data.body}</p>
+ 
+diff --git a/apps/web/src/router.tsx b/apps/web/src/router.tsx
+index 7d60e66..3bfcb80 100644
+--- a/apps/web/src/router.tsx
++++ b/apps/web/src/router.tsx
+@@ -50,7 +50,7 @@ function PostsPage() {
+         {posts.data.map((post) => (
+           <li key={post.id}>
+             <Link to="/posts/$postId" params={{ postId: String(post.id) }}>
+-              {post.title}
++              Post #{post.id}
+             </Link>{" "}
+             <small>updated {new Date(post.updated_at).toLocaleString()}</small>
+           </li>
+@@ -138,7 +138,7 @@ function EditPostPage() {
+       <h1>Edit post #{post.data.id}</h1>
+       <PostForm
+         key={post.data.id}
+-        initial={{ title: post.data.title, body: post.data.body }}
++        initial={{ title: "", body: post.data.body }}
+         submitLabel="Save changes"
+         onSubmit={async (input) => {
+           await api.updatePost(postId, input);

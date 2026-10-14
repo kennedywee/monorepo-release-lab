@@ -1,0 +1,141 @@
+# PR CI: tests, contract checks, type checks, and builds for every app.
+# It checks every API consumer on every run. It does not try to detect which apps a change affects.
+# The release workflow calls this file (workflow_call) so a tag gets the same checks.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Server specs (API + OpenAPI contract)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/server
+    env:
+      RAILS_ENV: test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: ruby/setup-ruby@v1
+        with:
+          working-directory: apps/server
+          bundler-cache: true
+      - run: bin/rails db:test:prepare
+      - run: bundle exec rspec
+
+  contract-types:
+    name: Generated TypeScript types match openapi.yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run contract:types
+      - name: Fail if schema.d.ts was not regenerated and committed
+        run: git diff --exit-code packages/api/src/schema.d.ts
+
+  consumers:
+    # Each consumer is type-checked against types generated from the contract in this commit.
+    # The desktop app has no screens of its own. The web check covers its renderer.
+    name: Typecheck ${{ matrix.app }} against the contract
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, store, mobile]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run contract:types
+      - run: bun run --cwd packages/api typecheck
+      - run: bun run --cwd apps/${{ matrix.app }} typecheck
+
+  contract-compatibility:
+    # Compares this PR's contract with the contract in the last stable tag (vX.Y.Z, not -rc).
+    # Installed mobile apps keep calling the API, so a breaking change needs a deliberate decision.
+    # Add the label "breaking-api-change-approved" to a PR to report breaking changes without failing.
+    name: Contract compatibility with last stable release
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Compare with the last stable contract
+        env:
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking-api-change-approved') }}
+        run: |
+          stable_tag=$(git tag --list 'v*' --sort=-v:refname | grep -Ev -- '-' | head -n1 || true)
+          if [ -z "$stable_tag" ]; then
+            echo "::notice::No stable tag exists yet. Nothing to compare."
+            exit 0
+          fi
+          git show "$stable_tag:apps/server/openapi.yaml" > /tmp/stable-openapi.yaml
+          fail_on=ERR
+          if [ "$APPROVED" = "true" ]; then fail_on=""; fi
+          echo "Comparing apps/server/openapi.yaml with $stable_tag"
+          docker run --rm \
+            -v /tmp/stable-openapi.yaml:/stable.yaml:ro \
+            -v "$PWD/apps/server/openapi.yaml:/proposed.yaml:ro" \
+            tufin/oasdiff:v1.33.0 breaking /stable.yaml /proposed.yaml ${fail_on:+--fail-on $fail_on}
+
+  web-builds:
+    name: Build ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, store, marketing, docs, support]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/${{ matrix.app }} build
+
+  mobile-bundle:
+    name: Export mobile JavaScript bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/mobile build
+
+  desktop-package:
+    name: Package desktop app (Linux, unpacked)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/desktop build
+
+  server-image:
+    name: Build server container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - run: docker build -t release-lab-server:ci apps/server

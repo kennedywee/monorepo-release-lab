@@ -1,0 +1,29 @@
+diff --git a/apps/mobile/app/index.tsx b/apps/mobile/app/index.tsx
+index abf47cf..13febe6 100644
+--- a/apps/mobile/app/index.tsx
++++ b/apps/mobile/app/index.tsx
+@@ -21,7 +21,8 @@ export default function PostsScreen() {
+       renderItem={({ item: post }) => (
+         <Link href={{ pathname: "/posts/[id]", params: { id: String(post.id) } }} asChild>
+           <Pressable style={{ padding: 16, borderBottomWidth: 1, borderColor: "#ddd" }}>
+-            <Text style={{ fontSize: 18 }}>{post.title}</Text>
++            <Text style={{ fontSize: 18 }}>Post #{post.id}</Text>
++            <Text numberOfLines={1}>{post.body}</Text>
+             <View>
+               <Text style={{ color: "#666" }}>{new Date(post.created_at).toLocaleDateString()}</Text>
+             </View>
+diff --git a/apps/mobile/app/posts/[id].tsx b/apps/mobile/app/posts/[id].tsx
+index 6730a4f..3e2f396 100644
+--- a/apps/mobile/app/posts/[id].tsx
++++ b/apps/mobile/app/posts/[id].tsx
+@@ -52,8 +52,8 @@ export default function PostScreen() {
+ 
+   return (
+     <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
+-      <Stack.Screen options={{ title: post.data.title }} />
+-      <Text style={{ fontSize: 22, fontWeight: "bold" }}>{post.data.title}</Text>
++      <Stack.Screen options={{ title: `Post #${post.data.id}` }} />
++      <Text style={{ fontSize: 22, fontWeight: "bold" }}>Post #{post.data.id}</Text>
+       <Text>{post.data.body}</Text>
+ 
+       <Text style={{ fontSize: 18, fontWeight: "bold", marginTop: 16 }}>Comments</Text>

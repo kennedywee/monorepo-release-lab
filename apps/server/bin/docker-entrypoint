@@ -1,0 +1,9 @@
+#!/bin/bash -e
+
+# Production migrations are a separate, explicit release step (see RELEASE.md).
+# Set DB_PREPARE_ON_BOOT=true for local previews that should create and seed a fresh database.
+if [ "${DB_PREPARE_ON_BOOT}" == "true" ] && [ "${@: -2:1}" == "./bin/rails" ] && [ "${@: -1:1}" == "server" ]; then
+  ./bin/rails db:prepare
+fi
+
+exec "${@}"

@@ -1,0 +1,39 @@
+{
+  "cli": {
+    "version": ">= 24.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.preview.release-lab.example"
+      }
+    },
+    "candidate": {
+      "distribution": "internal",
+      "channel": "candidate",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.candidate.release-lab.example"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "channel": "production",
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.release-lab.example"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      },
+      "ios": {}
+    }
+  }
+}

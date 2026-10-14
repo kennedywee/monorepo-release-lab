@@ -1,0 +1,181 @@
+# Deploy: put an already-built release on a host. Always started by a person.
+# Merging to main never runs this workflow.
+#
+# It deploys the artifacts attached to the GitHub Release for the tag. It never rebuilds.
+# Only config.js changes per environment.
+#
+# Required setup (not done in this repository):
+#   - GitHub environments "candidate" and "production". Give "production" required reviewers.
+#     Without required reviewers, the approval gate below does not stop anything.
+#   - Environment variables: DEPLOY_HOST, DEPLOY_USER, API_URL.
+#   - Environment secret: DEPLOY_SSH_KEY.
+#   - One host per environment, with Docker, /etc/release-lab/<environment>/server.env
+#     (SECRET_KEY_BASE, CORS_ORIGINS),
+#     and a web server that serves /srv/release-lab/<environment>/<app>/current.
+# When the configuration is missing, the deploy jobs fail with "NOT DEPLOYED".
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to deploy (for example v1.1.0 or v1.1.0-rc.1)
+        required: true
+        type: string
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [candidate, production]
+      data_preparation:
+        description: Manual data preparation required by this release (see RELEASE.md)
+        required: true
+        type: choice
+        options: [not-required, completed-and-verified-on-production]
+      data_preparation_record:
+        description: Link to the runbook record (required when data preparation was done)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag }}
+  TARGET: ${{ inputs.environment }}
+
+jobs:
+  plan:
+    name: Check the release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only stable tags go to production
+        run: |
+          if [ "$TARGET" = production ] && ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Production accepts only stable tags (vX.Y.Z). $TAG is not one."
+            exit 1
+          fi
+      - name: Read the release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p release-manifest.json
+          jq -e '.allBuildsSucceeded == true' release-manifest.json > /dev/null || {
+            echo "::error::The manifest for $TAG does not show every build as successful."
+            exit 1
+          }
+          {
+            echo "## Deploy plan"
+            echo "- Tag: $TAG"
+            echo "- Commit: $(jq -r .commit release-manifest.json)"
+            echo "- Environment: $TARGET"
+            echo "- Data preparation: ${{ inputs.data_preparation }} ${{ inputs.data_preparation_record }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Data preparation needs a record
+        if: inputs.data_preparation != 'not-required' && inputs.data_preparation_record == ''
+        run: |
+          echo "::error::Data preparation was done. Link the runbook record before deploying."
+          exit 1
+
+  approve:
+    # The approval gate. For "production", GitHub pauses here until a required reviewer
+    # approves. Reviewers confirm the data preparation record and the candidate test results.
+    name: Approval for ${{ inputs.environment }}
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - run: echo "Approved deployment of $TAG to $TARGET." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-server:
+    # Order: back up the database, run migrations as their own step, start the new
+    # container, then smoke test. Data repairs are never run here (see RELEASE.md).
+    name: Deploy server
+    needs: approve
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      API_URL: ${{ vars.API_URL }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+    steps:
+      - name: Require deployment configuration
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$API_URL" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::error::NOT DEPLOYED. DEPLOY_HOST, DEPLOY_USER, API_URL, or DEPLOY_SSH_KEY is not configured for $TARGET."
+            exit 1
+          fi
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+      - name: Migrate and start
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/release-lab-server:$TAG"
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$image" "$TARGET" "$TAG" <<'REMOTE'
+          set -euo pipefail
+          image=$1; target=$2; tag=$3
+          volume="release-lab-$target-storage"
+          env_file="/etc/release-lab/$target/server.env"
+          docker pull "$image"
+          # 1. Back up the SQLite database before any schema change.
+          docker run --rm -v "$volume:/rails/storage" "$image" \
+            sqlite3 /rails/storage/production.sqlite3 ".backup /rails/storage/backup-before-$tag.sqlite3"
+          # 2. Run schema migrations as a separate step, with the new image.
+          docker run --rm --env-file "$env_file" -v "$volume:/rails/storage" "$image" ./bin/rails db:migrate
+          # 3. Replace the running container.
+          docker rm -f "release-lab-$target-server" || true
+          docker run -d --name "release-lab-$target-server" --restart unless-stopped \
+            --env-file "$env_file" -v "$volume:/rails/storage" -p 127.0.0.1:3000:3000 "$image"
+          REMOTE
+      - name: Smoke test
+        run: |
+          for _ in 1 2 3 4 5; do curl -fsS "$API_URL/up" && break; sleep 5; done
+          curl -fsS "$API_URL/posts" | jq -e 'type == "array"'
+
+  deploy-static:
+    # Uses the same artifact that was tested. Only config.js changes per environment.
+    name: Deploy ${{ matrix.app }}
+    needs: deploy-server
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, store, marketing, docs, support]
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      API_URL: ${{ vars.API_URL }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+    steps:
+      - name: Require deployment configuration
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$API_URL" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::error::NOT DEPLOYED. Hosting for ${{ matrix.app }} is not configured for $TARGET."
+            exit 1
+          fi
+      - name: Download the released artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "${{ matrix.app }}-$TAG.tar.gz"
+          mkdir site && tar -xzf "${{ matrix.app }}-$TAG.tar.gz" -C site
+          if [ -f site/config.js ]; then
+            jq -n --arg url "$API_URL" '"window.APP_CONFIG = window.APP_CONFIG || { apiUrl: \($url | tojson) };"' -r > site/config.js
+          fi
+      - name: Upload and switch
+        # Each tag gets its own folder. "current" is a symlink, so rollback is one command.
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          dir="/srv/release-lab/$TARGET/${{ matrix.app }}"
+          rsync -a -e "ssh -i ~/.ssh/id_deploy" site/ "$DEPLOY_USER@$DEPLOY_HOST:$dir/$TAG/"
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" "ln -sfn '$dir/$TAG' '$dir/current'"

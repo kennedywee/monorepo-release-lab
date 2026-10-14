@@ -1,0 +1,19 @@
+{
+  "name": "monorepo-release-lab",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/store",
+    "apps/mobile",
+    "apps/desktop",
+    "apps/marketing",
+    "apps/docs",
+    "apps/support",
+    "packages/*"
+  ],
+  "scripts": {
+    "contract:types": "bun run --cwd packages/api generate",
+    "typecheck": "bun run --filter '*' typecheck",
+    "build": "bun run --filter '*' build"
+  }
+}
