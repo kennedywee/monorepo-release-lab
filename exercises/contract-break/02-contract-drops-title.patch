@@ -16,3 +16,34 @@ index a2809ba..95df69c 100644
          body:
            type: string
          created_at:
+diff --git a/apps/server/spec/requests/posts_spec.rb b/apps/server/spec/requests/posts_spec.rb
+index ef878ff..f097921 100644
+--- a/apps/server/spec/requests/posts_spec.rb
++++ b/apps/server/spec/requests/posts_spec.rb
+@@ -11,7 +11,7 @@ RSpec.describe "Posts API", type: :request do
+       get "/posts"
+ 
+       assert_schema_conform(200)
+-      expect(response.parsed_body.map { |post| post["title"] }).to eq([ "Newer", "Older" ])
++      expect(response.parsed_body.map { |post| post["id"] }).to eq([ newer.id, older.id ])
+     end
+   end
+ 
+@@ -20,7 +20,7 @@ RSpec.describe "Posts API", type: :request do
+       get "/posts/#{older.id}"
+ 
+       assert_schema_conform(200)
+-      expect(response.parsed_body).to include("id" => older.id, "title" => "Older", "body" => "First body")
++      expect(response.parsed_body).to include("id" => older.id, "body" => "First body")
+     end
+ 
+     it "returns 404 for a missing post" do
+@@ -38,7 +38,7 @@ RSpec.describe "Posts API", type: :request do
+       }.to change(Post, :count).by(1)
+ 
+       assert_schema_conform(201)
+-      expect(response.parsed_body).to include("title" => "Hello", "body" => "World")
++      expect(response.parsed_body).to include("body" => "World")
+     end
+ 
+     it "rejects a blank title" do
