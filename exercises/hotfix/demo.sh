@@ -64,7 +64,7 @@ run git merge -q --no-ff hotfix/v1.0.1 -m "Merge hotfix v1.0.1 into main"
 
 echo
 echo "== Result"
-git log --graph --format='%h %s%d' --all
+git log --graph --decorate-refs-exclude=refs/remotes --format='%h %s%d' main hotfix/v1.0.1 --not v1.0.0~1
 echo
 for tag in v1.0.0 v1.0.1; do
   echo "$tag identifies commit $(git rev-parse --short "$tag^{commit}"): $(git log -1 --format=%s "$tag")"
