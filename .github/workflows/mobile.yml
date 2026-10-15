@@ -8,6 +8,8 @@
 #
 # Required setup (not done in this repository): EXPO_TOKEN secret, EAS_PROJECT_ID and API_URL
 # variables, store credentials in EAS, and GitHub environments "candidate" and "production".
+#
+# Start: gh workflow run mobile.yml -f tag=<tag> -f action=update, or Actions → Mobile → Run workflow.
 name: Mobile
 
 on:
