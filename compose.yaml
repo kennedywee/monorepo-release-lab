@@ -1,0 +1,58 @@
+# Runs the API and every browser app locally:
+#   docker compose up --build
+# Mobile and desktop are not containers. Start them on your computer (see README.md).
+# For local use only: the secret below is public and HTTPS is off.
+# Website ports start at 8090 to stay clear of 8081, which the Expo bundler uses.
+
+services:
+  server:
+    build: apps/server
+    ports: ["3000:3000"]
+    environment:
+      SECRET_KEY_BASE: local-compose-only-not-a-secret
+      RAILS_FORCE_SSL: "false"
+      RAILS_ASSUME_SSL: "false"
+      DB_PREPARE_ON_BOOT: "true" # creates and seeds the database on first start
+    volumes:
+      - server-storage:/rails/storage
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:3000/up"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports: ["8090:80"]
+    depends_on:
+      server: { condition: service_healthy }
+    restart: unless-stopped
+
+  store:
+    build:
+      context: .
+      dockerfile: apps/store/Dockerfile
+    ports: ["8091:80"]
+    depends_on:
+      server: { condition: service_healthy }
+    restart: unless-stopped
+
+  marketing:
+    build: apps/marketing
+    ports: ["8092:80"]
+    restart: unless-stopped
+
+  docs:
+    build: apps/docs
+    ports: ["8093:80"]
+    restart: unless-stopped
+
+  support:
+    build: apps/support
+    ports: ["8094:80"]
+    restart: unless-stopped
+
+volumes:
+  server-storage:

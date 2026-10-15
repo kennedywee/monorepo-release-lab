@@ -1,0 +1,11 @@
+# Build context for apps/web/Dockerfile and apps/store/Dockerfile (the repository root).
+.git
+**/node_modules
+**/dist
+apps/server
+apps/mobile/.expo
+apps/desktop/renderer
+apps/desktop/release
+release-out
+.env
+.env.*

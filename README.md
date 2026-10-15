@@ -7,6 +7,28 @@ The apps are real and work. The styling is deliberately minimal.
 - Release process, previews, candidates, hotfixes, and data checks: [RELEASE.md](RELEASE.md)
 - Exercises: [exercises/](exercises/)
 
+## Quick start (Docker Compose)
+
+You need only Docker.
+
+```sh
+docker compose up --build      # first run builds the images; add -d to run in the background
+```
+
+| App | URL |
+| --- | --- |
+| API | http://localhost:3000/posts |
+| web (staff) | http://localhost:8090 |
+| store (blog) | http://localhost:8091 |
+| marketing | http://localhost:8092 |
+| docs | http://localhost:8093 |
+| support | http://localhost:8094 |
+
+- The database is created and seeded on first start. It is kept in the `server-storage` volume. `docker compose down -v` deletes it.
+- The API must be on port 3000, because web and store call `http://localhost:3000`. If something else uses that port, stop it first.
+- Mobile and desktop do not run in containers. Start them on your computer (see [Start the apps](#start-the-apps)) and point them at the API from Compose.
+- Compose is for local use only. Its `SECRET_KEY_BASE` is public, and HTTPS is off. The browser apps are production builds, so code changes need `docker compose up --build`. For live reload, use the commands below.
+
 ## Architecture
 
 ```mermaid
@@ -40,6 +62,7 @@ flowchart LR
 | `.github/workflows` | CI, release, preview, deploy, and mobile workflows. See [RELEASE.md](RELEASE.md#workflows). |
 | `exercises` | The contract-break exercise, the hotfix demo, and the data-check rehearsal. |
 | `scripts/release-manifest.ts` | Writes the release manifest and notes in the release workflow. |
+| `compose.yaml` | Local Docker Compose setup. Each app has its own `Dockerfile`; browser apps are served by nginx. Not used by the release workflows. |
 
 JavaScript apps use Bun workspaces (`package.json`, `bun.lock`). Rails keeps its own `Gemfile`.
 
@@ -51,10 +74,10 @@ JavaScript apps use Bun workspaces (`package.json`, `bun.lock`). Rails keeps its
 | Bun | 1.2.21 | all JavaScript apps |
 | Node.js | 22.12 or later (24 used here) | Expo CLI, Electron tooling |
 | SQLite | 3.x | server |
-| Docker | any recent | server container, contract comparison (`oasdiff`) |
+| Docker | any recent | Docker Compose, server container, contract comparison (`oasdiff`) |
 | Expo Go, iOS Simulator, or Android Emulator | optional | running the mobile app |
 
-## Set up
+## Set up (without Docker)
 
 ```sh
 bun install
@@ -157,6 +180,7 @@ All commands ran on Linux x86_64 on 2026-10-14, from a clean commit.
 | Browser smoke test (Playwright, against Rails) | web: create (blank title rejected), edit, read comments. store: list, show, comment (blank comment rejected), deep-link reload, 404 page, API-down page | all passed, no page errors |
 | Desktop smoke test | packaged app started headless with `API_URL=http://localhost:3300`, inspected over DevTools | loaded posts and comments from that API |
 | Local release candidate | server image with `DB_PREPARE_ON_BOOT=true` on its own volume; released web and store tarballs served with a replaced `config.js` | API seeded; store deep link worked; staff app used the candidate API |
+| Docker Compose | `docker compose up --build -d`, then a Playwright test (2026-10-15) | all 6 services up; API seeded; web created a post; store showed it and reloaded its deep link |
 | Contract-break exercise | `bash exercises/contract-break/run.sh` | every step as expected (output below) |
 | Hotfix demo | `bash exercises/hotfix/demo.sh` | v1.0.1 excludes the unreleased main commit; main contains the fix |
 | Data-check rehearsal | see [RELEASE.md](RELEASE.md#manual-database-preparation) | migration blocked before repair, applied after |
