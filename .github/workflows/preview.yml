@@ -1,12 +1,14 @@
-# PR preview: build every app for one open pull request, on demand.
+# PR preview: build every app for each pull request.
 # Hosting is not configured, so the result is a set of temporary test artifacts
 # (kept 7 days), not a URL. Run them locally with the commands in RELEASE.md.
 # A preview is not a release: it has no tag and is never deployed by this workflow.
 #
-# Start: gh workflow run preview.yml -f pr=<number>, or Actions → PR preview → Run workflow.
+# Runs on every push to a pull request. A newer push cancels the older preview.
+# To rebuild a preview by hand: gh workflow run preview.yml -f pr=<number>.
 name: PR preview
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       pr:
@@ -18,14 +20,21 @@ on:
 permissions:
   contents: read
 
+env:
+  PR: ${{ github.event.pull_request.number || inputs.pr }}
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
 jobs:
   preview:
-    name: Build preview for PR ${{ inputs.pr }}
+    name: Build preview for PR ${{ github.event.pull_request.number || inputs.pr }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: refs/pull/${{ inputs.pr }}/head
+          ref: refs/pull/${{ env.PR }}/head
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
@@ -40,19 +49,20 @@ jobs:
           tar -czf preview/mobile-bundles.tar.gz -C apps/mobile/dist .
       - name: Build server image
         run: |
-          docker build -t "release-lab-server:pr-${{ inputs.pr }}" apps/server
-          docker save "release-lab-server:pr-${{ inputs.pr }}" | gzip > preview/server-image.tar.gz
+          docker build -t "release-lab-server:pr-$PR" apps/server
+          docker save "release-lab-server:pr-$PR" | gzip > preview/server-image.tar.gz
       - name: Describe the preview
         run: |
           {
-            echo "PR preview for #${{ inputs.pr }}"
+            echo "PR preview for #$PR"
             echo "Commit: $(git rev-parse HEAD)"
             echo "Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "Not a release. Not deployed. Run locally with the PR preview steps in RELEASE.md."
+            echo "Download: gh run download $GITHUB_RUN_ID -n preview-pr-$PR"
           } > preview/PREVIEW.txt
           cat preview/PREVIEW.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: preview-pr-${{ inputs.pr }}
+          name: preview-pr-${{ env.PR }}
           path: preview/
           retention-days: 7

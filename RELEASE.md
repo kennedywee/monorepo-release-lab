@@ -27,7 +27,7 @@ Nothing here has been pushed, tagged on a remote, published, or deployed. The co
 | --- | --- | --- | --- |
 | What it is | A temporary build of one proposed change | A selected commit from `main` that is under test | An approved repository version |
 | Identified by | PR number and commit SHA | Tag `vX.Y.Z-rc.N` (for example `v1.1.0-rc.1`) | Tag `vX.Y.Z` (for example `v1.1.0`) |
-| Started by | A person runs the **PR preview** workflow | A person pushes the candidate tag | A person pushes the stable tag |
+| Started by | Every push to a pull request | A person pushes the candidate tag | A person pushes the stable tag |
 | Output | Workflow artifacts kept 7 days | GitHub **pre-release**, `candidate` channels | GitHub Release, production channels allowed |
 | Can reach production users | No | No | Only after the approved **Deploy** and **Mobile** workflows |
 
@@ -54,7 +54,7 @@ There are no separate Git tags for mobile, desktop, or the websites.
 | --- | --- | --- | --- |
 | `ci.yml` | Pull request, push to `main`, called by `release.yml` | Rails specs with contract validation; generated types are current; type checks for web, store, and mobile; builds of every web app; mobile bundle export; Linux desktop package; server container build; on PRs, a breaking-change check against the last stable contract | No |
 | `release.yml` | Push of a tag `v*` | Validates the tag, runs `ci.yml`, builds each app in its own job from the tagged commit, pushes the server image to GHCR, writes the manifest, creates one GitHub Release | GitHub Release and container image only. **No deployment.** |
-| `preview.yml` | Manual, with a PR number | Builds every app from the PR head and uploads test artifacts | No |
+| `preview.yml` | Every push to a pull request, or manual with a PR number | Builds every app from the PR head and uploads test artifacts | No |
 | `deploy.yml` | Manual, with a tag, an environment, and the apps to deploy | Checks the manifest, waits at the approval gate, backs up and migrates the database, starts the server, then deploys the chosen web sites | Yes, after approval. Fails with `NOT DEPLOYED` if hosting is not configured. |
 | `mobile.yml` | Manual, with a tag | Sends an EAS Update, or submits an EAS build to a store testing track | Yes, after approval for production. Fails with `NOT PUBLISHED` if EAS is not configured. |
 
@@ -126,7 +126,7 @@ When a separate build is required:
 
 A PR preview is temporary. It is not a release and has no tag.
 
-**In GitHub (hosting not configured):** run **Actions → PR preview → Run workflow** and enter the PR number. The workflow builds every app from `refs/pull/<N>/head` and uploads the `preview-pr-<N>` artifact (kept 7 days). It uses no secrets, because PR code can come from anyone.
+**In GitHub (hosting not configured):** the **PR preview** workflow runs on every push to a pull request. A newer push cancels the older run. It builds every app from `refs/pull/<N>/head` and uploads the `preview-pr-<N>` artifact (kept 7 days). It uses no secrets, because PR code can come from anyone. Download it with `gh run download <run-id> -n preview-pr-<N>`. To rebuild by hand, run **Actions → PR preview → Run workflow** with the PR number.
 
 **Locally, with an isolated database:**
 
