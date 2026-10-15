@@ -55,7 +55,7 @@ There are no separate Git tags for mobile, desktop, or the websites.
 | `ci.yml` | Pull request, push to `main`, called by `release.yml` | Rails specs with contract validation; generated types are current; type checks for web, store, and mobile; builds of every web app; mobile bundle export; Linux desktop package; server container build; on PRs, a breaking-change check against the last stable contract | No |
 | `release.yml` | Push of a tag `v*` | Validates the tag, runs `ci.yml`, builds each app in its own job from the tagged commit, pushes the server image to GHCR, writes the manifest, creates one GitHub Release | GitHub Release and container image only. **No deployment.** |
 | `preview.yml` | Manual, with a PR number | Builds every app from the PR head and uploads test artifacts | No |
-| `deploy.yml` | Manual, with a tag and an environment | Checks the manifest, waits at the approval gate, backs up and migrates the database, starts the server, then deploys the web sites | Yes, after approval. Fails with `NOT DEPLOYED` if hosting is not configured. |
+| `deploy.yml` | Manual, with a tag, an environment, and the apps to deploy | Checks the manifest, waits at the approval gate, backs up and migrates the database, starts the server, then deploys the chosen web sites | Yes, after approval. Fails with `NOT DEPLOYED` if hosting is not configured. |
 | `mobile.yml` | Manual, with a tag | Sends an EAS Update, or submits an EAS build to a store testing track | Yes, after approval for production. Fails with `NOT PUBLISHED` if EAS is not configured. |
 
 ```mermaid
@@ -202,6 +202,19 @@ git push origin v1.1.0
 The `prepare` job lists the candidate tags on that commit. It warns if there are none.
 
 The stable release is still not deployed. To deploy, run **Actions → Deploy** with the tag and `production`. A required reviewer must approve it.
+
+### Deploy only the apps that changed
+
+Every tag builds every app, but you choose what to deploy. Set the `apps` input of **Deploy** to a comma-separated list, for example `server` or `web,store`. The default is `all`. Apps you leave out keep running their current tag.
+
+| The release changed | `apps` | Then |
+| --- | --- | --- |
+| Mobile only | do not run **Deploy** | Run **Mobile** only |
+| Server only | `server` | |
+| Store only | `store` | |
+| Server and web | `server,web` | Server deploys first, then web |
+
+The workflow does not check your choice. It cannot tell which apps a change affects. Compare the tags yourself, for example `git diff --stat v1.0.0 v1.1.0 -- apps packages`. A change in `packages/api` affects web, store, and mobile. If you are unsure, deploy `all`. Redeploying an unchanged app is safe.
 
 ## Optional weekly schedule
 

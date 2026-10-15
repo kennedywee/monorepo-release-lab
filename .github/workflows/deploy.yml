@@ -4,6 +4,9 @@
 # It deploys the artifacts attached to the GitHub Release for the tag. It never rebuilds.
 # Only config.js changes per environment.
 #
+# The "apps" input chooses what to deploy. A person decides which apps a release changed;
+# this workflow does not work that out. Apps left out stay on the tag they already run.
+#
 # Required setup (not done in this repository):
 #   - GitHub environments "candidate" and "production". Give "production" required reviewers.
 #     Without required reviewers, the approval gate below does not stop anything.
@@ -27,6 +30,11 @@ on:
         required: true
         type: choice
         options: [candidate, production]
+      apps:
+        description: Apps to deploy, comma-separated (server, web, store, marketing, docs, support), or "all"
+        required: true
+        type: string
+        default: all
       data_preparation:
         description: Manual data preparation required by this release (see RELEASE.md)
         required: true
@@ -47,12 +55,35 @@ concurrency:
 env:
   TAG: ${{ inputs.tag }}
   TARGET: ${{ inputs.environment }}
+  APPS: ${{ inputs.apps }}
 
 jobs:
   plan:
     name: Check the release
     runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.apps.outputs.server }}
+      static: ${{ steps.apps.outputs.static }}
     steps:
+      - name: Choose the apps
+        id: apps
+        run: |
+          known="server web store marketing docs support"
+          [ "$APPS" = all ] && APPS="${known// /,}"
+          server=false; static=()
+          for app in ${APPS//,/ }; do
+            case " $known " in
+              *" $app "*) ;;
+              *) echo "::error::Unknown app: $app. Use: $known, or all."; exit 1 ;;
+            esac
+            if [ "$app" = server ]; then server=true; else static+=("$app"); fi
+          done
+          if [ "$server" = false ] && [ ${#static[@]} -eq 0 ]; then
+            echo "::error::No apps chosen."
+            exit 1
+          fi
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+          echo "static=$(printf '%s\n' "${static[@]}" | jq -Rnc '[inputs | select(length > 0)]')" >> "$GITHUB_OUTPUT"
       - name: Only stable tags go to production
         run: |
           if [ "$TARGET" = production ] && ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -73,6 +104,7 @@ jobs:
             echo "- Tag: $TAG"
             echo "- Commit: $(jq -r .commit release-manifest.json)"
             echo "- Environment: $TARGET"
+            echo "- Apps: $APPS"
             echo "- Data preparation: ${{ inputs.data_preparation }} ${{ inputs.data_preparation_record }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Data preparation needs a record
@@ -95,7 +127,8 @@ jobs:
     # Order: back up the database, run migrations as their own step, start the new
     # container, then smoke test. Data repairs are never run here (see RELEASE.md).
     name: Deploy server
-    needs: approve
+    needs: [plan, approve]
+    if: needs.plan.outputs.server == 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
@@ -142,13 +175,17 @@ jobs:
   deploy-static:
     # Uses the same artifact that was tested. Only config.js changes per environment.
     name: Deploy ${{ matrix.app }}
-    needs: deploy-server
+    # Runs after the server deploy succeeds, or right away when the server is not chosen.
+    needs: [plan, approve, deploy-server]
+    if: >-
+      !cancelled() && needs.approve.result == 'success' && needs.plan.outputs.static != '[]' &&
+      (needs.deploy-server.result == 'success' || needs.deploy-server.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     strategy:
       fail-fast: false
       matrix:
-        app: [web, store, marketing, docs, support]
+        app: ${{ fromJSON(needs.plan.outputs.static) }}
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
