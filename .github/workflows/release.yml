@@ -306,6 +306,7 @@ jobs:
         run: |
           previous=$(git tag --list 'v*' --sort=-v:refname --merged HEAD | grep -Ev -- '-' | grep -vx "$RELEASE_TAG" | head -n1 || true)
           echo "PREVIOUS_TAG=$previous" >> "$GITHUB_ENV"
+          mkdir -p release-out
           git log --pretty='- %s (%h)' ${previous:+$previous..}HEAD > release-out/changes.md
       - name: Write manifest and notes
         id: manifest
