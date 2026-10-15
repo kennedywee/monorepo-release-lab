@@ -2,6 +2,8 @@
 # Hosting is not configured, so the result is a set of temporary test artifacts
 # (kept 7 days), not a URL. Run them locally with the commands in RELEASE.md.
 # A preview is not a release: it has no tag and is never deployed by this workflow.
+#
+# Start: gh workflow run preview.yml -f pr=<number>, or Actions → PR preview → Run workflow.
 name: PR preview
 
 on:

@@ -203,7 +203,11 @@ jobs:
           tar -xzf "web-$RELEASE_TAG.tar.gz" -C apps/desktop/renderer
       - name: Package
         working-directory: apps/desktop
-        run: bunx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version=${{ needs.prepare.outputs.version }}
+        # A missing secret becomes an empty string. On macOS, electron-builder reads an empty
+        # CSC_LINK as a path and fails with "not a file", so unset it to build unsigned.
+        run: |
+          if [ -z "$CSC_LINK" ]; then unset CSC_LINK CSC_KEY_PASSWORD; fi
+          bunx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version=${{ needs.prepare.outputs.version }}
       - name: Record status
         run: |
           mkdir -p status out
