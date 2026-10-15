@@ -1,12 +1,16 @@
 # PR CI: tests, contract checks, type checks, and builds for every app.
 # It checks every API consumer on every run. It does not try to detect which apps a change affects.
 # The release workflow calls this file (workflow_call) so a tag gets the same checks.
+#
+# Jobs are grouped by toolchain, not by app, so each job installs its dependencies once.
+# Each check is a named step. If the js job fails, the failed step name tells you which app.
+# Branch protection needs only the "CI passed" job.
 name: CI
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [master]
   workflow_call:
 
 permissions:
@@ -14,7 +18,7 @@ permissions:
 
 jobs:
   server:
-    name: Server specs (API + OpenAPI contract)
+    name: Server specs and contract compatibility
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,58 +29,19 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
       - uses: ruby/setup-ruby@v1
         with:
           working-directory: apps/server
           bundler-cache: true
       - run: bin/rails db:test:prepare
-      - run: bundle exec rspec
-
-  contract-types:
-    name: Generated TypeScript types match openapi.yaml
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run contract:types
-      - name: Fail if schema.d.ts was not regenerated and committed
-        run: git diff --exit-code packages/api/src/schema.d.ts
-
-  consumers:
-    # Each consumer is type-checked against types generated from the contract in this commit.
-    # The desktop app has no screens of its own. The web check covers its renderer.
-    name: Typecheck ${{ matrix.app }} against the contract
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        app: [web, store, mobile]
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run contract:types
-      - run: bun run --cwd packages/api typecheck
-      - run: bun run --cwd apps/${{ matrix.app }} typecheck
-
-  contract-compatibility:
-    # Compares this PR's contract with the contract in the last stable tag (vX.Y.Z, not -rc).
-    # Installed mobile apps keep calling the API, so a breaking change needs a deliberate decision.
-    # Add the label "breaking-api-change-approved" to a PR to report breaking changes without failing.
-    name: Contract compatibility with last stable release
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - name: Compare with the last stable contract
+      - name: Server specs (API + OpenAPI contract)
+        run: bundle exec rspec
+      # Compares this PR's contract with the contract in the last stable tag (vX.Y.Z, not -rc).
+      # Installed mobile apps keep calling the API, so a breaking change needs a deliberate decision.
+      # Add the label "breaking-api-change-approved" to a PR to report breaking changes without failing.
+      - name: Contract compatibility with last stable release
+        if: github.event_name == 'pull_request'
         env:
           APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking-api-change-approved') }}
         run: |
@@ -91,26 +56,11 @@ jobs:
           echo "Comparing apps/server/openapi.yaml with $stable_tag"
           docker run --rm \
             -v /tmp/stable-openapi.yaml:/stable.yaml:ro \
-            -v "$PWD/apps/server/openapi.yaml:/proposed.yaml:ro" \
+            -v "$PWD/openapi.yaml:/proposed.yaml:ro" \
             tufin/oasdiff:v1.33.0 breaking /stable.yaml /proposed.yaml ${fail_on:+--fail-on $fail_on}
 
-  web-builds:
-    name: Build ${{ matrix.app }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        app: [web, store, marketing, docs, support]
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/${{ matrix.app }} build
-
-  mobile-bundle:
-    name: Export mobile JavaScript bundles
+  js:
+    name: Types and builds for every JavaScript app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -118,18 +68,33 @@ jobs:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/mobile build
-
-  desktop-package:
-    name: Package desktop app (Linux, unpacked)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd apps/desktop pack
+      - run: bun run contract:types
+      - name: Generated TypeScript types match openapi.yaml
+        run: git diff --exit-code packages/api/src/schema.d.ts
+      # Each consumer is type-checked against types generated from the contract in this commit.
+      # The desktop app has no screens of its own. The web check covers its renderer.
+      - name: Typecheck packages/api
+        run: bun run --cwd packages/api typecheck
+      - name: Typecheck web against the contract
+        run: bun run --cwd apps/web typecheck
+      - name: Typecheck store against the contract
+        run: bun run --cwd apps/store typecheck
+      - name: Typecheck mobile against the contract
+        run: bun run --cwd apps/mobile typecheck
+      - name: Build web
+        run: bun run --cwd apps/web build
+      - name: Build store
+        run: bun run --cwd apps/store build
+      - name: Build marketing
+        run: bun run --cwd apps/marketing build
+      - name: Build docs
+        run: bun run --cwd apps/docs build
+      - name: Build support
+        run: bun run --cwd apps/support build
+      - name: Export mobile JavaScript bundles
+        run: bun run --cwd apps/mobile build
+      - name: Package desktop app (Linux, unpacked)
+        run: bun run --cwd apps/desktop pack
 
   server-image:
     name: Build server container
@@ -139,3 +104,19 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - run: docker build -t release-lab-server:ci apps/server
+
+  passed:
+    # The one required status. It fails if any job above failed or was cancelled.
+    name: CI passed
+    if: always()
+    needs: [server, js, server-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if a job did not succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then exit 1; fi
+          done
