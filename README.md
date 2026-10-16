@@ -30,6 +30,8 @@ docker compose up --build
 
 You need Ruby 3.4.5, Bun 1.2.21, Node.js 22.12 or later, and SQLite.
 
+[mise](https://mise.jdx.dev) installs the pinned Ruby, Bun, and Node.js versions from `mise.toml` and `mise.lock`. Run `mise install`. After you change a version in `mise.toml`, run `mise lock` and commit both files.
+
 ```sh
 bun install
 (cd apps/server && bundle install && bin/rails db:prepare)
