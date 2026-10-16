@@ -54,7 +54,7 @@ There are no separate Git tags for mobile, desktop, or the websites.
 | --- | --- | --- | --- |
 | `ci.yml` | Pull request, push to `master`, called by `release.yml` | Four jobs: `server`, `js`, `server-image`, and `CI passed`. Together they run Rails specs with contract validation; generated types are current; type checks for web, store, and mobile; builds of every web app; mobile bundle export; Linux desktop package; server container build; on PRs, a breaking-change check against the last stable contract | No |
 | `release.yml` | Push of a tag `v*` | Validates the tag, runs `ci.yml`, builds each app in its own job from the tagged commit, pushes the server image to GHCR, writes the manifest, creates one GitHub Release | GitHub Release and container image only. **No deployment.** |
-| `preview.yml` | Pull requests with the `preview` label (every push), or manual with a PR number | Builds every app from the PR head and uploads test artifacts | No |
+| `preview.yml` | Pull requests with the `preview` label (every push), or manual with a PR number | Builds every app from the PR head and uploads test artifacts. When Cloudflare is configured, uploads web and store to Cloudflare Pages and comments the links. | Preview links only. Never staging or production. |
 | `deploy.yml` | Manual, with a tag, an environment, and the apps to deploy | Checks the manifest, waits at the approval gate, backs up and migrates the database, starts the server, then deploys the chosen web sites | Yes, after approval. Fails with `NOT DEPLOYED` if hosting is not configured. |
 | `mobile.yml` | Manual, with a tag | Sends an EAS Update, or submits an EAS build to a store testing track | Yes, after approval for production. Fails with `NOT PUBLISHED` if EAS is not configured. |
 
@@ -126,7 +126,9 @@ When a separate build is required:
 
 A PR preview is temporary. It is not a release and has no tag.
 
-**In GitHub (hosting not configured):** add the `preview` label to a pull request. The **PR preview** workflow then runs at once and on every later push to that PR. Remove the label to stop. PRs without the label build no preview. A newer push cancels the older run. It builds every app from `refs/pull/<N>/head` and uploads the `preview-pr-<N>` artifact (kept 7 days). It uses no secrets, because PR code can come from anyone. Download it with `gh run download <run-id> -n preview-pr-<N>`. To rebuild by hand, run **Actions → PR preview → Run workflow** with the PR number.
+**In GitHub:** add the `preview` label to a pull request. The **PR preview** workflow then runs at once and on every later push to that PR. Remove the label to stop. PRs without the label build no preview. A newer push cancels the older run. It builds every app from `refs/pull/<N>/head` and uploads the `preview-pr-<N>` artifact (kept 7 days). The build job uses no secrets, because PR code can come from anyone. Download it with `gh run download <run-id> -n preview-pr-<N>`. To rebuild by hand, run **Actions → PR preview → Run workflow** with the PR number.
+
+**Preview links (Cloudflare Pages):** when Cloudflare is configured, a second job uploads the web and store builds to Cloudflare Pages and comments the links on the PR. Each PR keeps the same links across pushes: `https://pr-<N>.release-lab-web.pages.dev` and `https://pr-<N>.release-lab-store.pages.dev`. The links call the API at `PREVIEW_API_URL`, normally staging, so they share staging's data. This job gets the Cloudflare token, but it runs no PR code. It only uploads the built files. Fork PRs get no links. While Cloudflare is not configured, the job writes `NO PREVIEW LINKS` in its summary.
 
 **Locally, with an isolated database:**
 
@@ -481,4 +483,6 @@ These items are configured in the workflows but need accounts or settings that t
 | `DESKTOP_CSC_LINK`, `DESKTOP_CSC_KEY_PASSWORD` (secrets) | `release.yml` | Code-signing certificates. Notarization on macOS needs more setup. |
 | Label `breaking-api-change-approved` | `ci.yml` | Repository labels |
 | Label `preview` | `preview.yml` | Repository labels |
+| `CLOUDFLARE_API_TOKEN` (secret, permission "Cloudflare Pages: Edit"), `CLOUDFLARE_ACCOUNT_ID` and `PREVIEW_API_URL` (variables), and the Pages projects `release-lab-web` and `release-lab-store` (`npx wrangler pages project create release-lab-web --production-branch master`, and the same for store) | `preview.yml` | Cloudflare account, repository secrets and variables |
+| `CORS_ORIGINS=*` in the server.env of the API that previews call. Each PR has a new origin, and the server matches only exact origins. The API uses no cookies, so `*` is safe. | `preview.yml` | Your infrastructure |
 | Required status check `CI passed` | `ci.yml` | Repository settings → Branches |
