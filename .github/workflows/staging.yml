@@ -1,0 +1,165 @@
+# Staging: deploy master to the "staging" environment after CI passes on master.
+# Every app with a host (server, web, store, marketing, docs, support) goes to staging.
+# Staging is not a release: it has no tag, and production still needs deploy.yml.
+#
+# It builds from the master commit. It does not use release artifacts.
+#
+# Off by default. To turn it on:
+#   - Set the repository variable STAGING_ENABLED to "true".
+#   - Create the GitHub environment "staging" with DEPLOY_HOST, DEPLOY_USER, API_URL
+#     (variables), DEPLOY_SSH_KEY (secret), and optional SERVER_PORT.
+#   - Prepare the host as for deploy.yml, with /etc/release-lab/staging/server.env.
+# While it is off, the run writes "NOT DEPLOYED" in its summary and deploys nothing.
+#
+# To deploy master again by hand: gh workflow run staging.yml.
+name: Staging
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Deploys wait for each other. None is cancelled halfway.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  plan:
+    name: Check that staging is on
+    # Only a passed CI run from a push to master in this repository. A fork PR from a
+    # branch named "master" also matches the branches filter, so check the event and repository.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+      label: ${{ steps.check.outputs.label }}
+    steps:
+      - id: check
+        env:
+          ENABLED: ${{ vars.STAGING_ENABLED }}
+          REF: ${{ github.ref_name }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$REF" != master ]; then
+            echo "::error::Staging deploys master only. This run is on $REF."
+            exit 1
+          fi
+          echo "label=master-${SHA::12}" >> "$GITHUB_OUTPUT"
+          if [ "$ENABLED" = true ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Deploying $SHA to staging." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "NOT DEPLOYED. Staging is off. Set the repository variable STAGING_ENABLED to true." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::NOT DEPLOYED. Staging is off."
+          fi
+
+  build-server:
+    name: Build and push the server image
+    needs: plan
+    if: needs.plan.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SHA }}
+      - id: image
+        env:
+          LABEL: ${{ needs.plan.outputs.label }}
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/release-lab-server:$LABEL" >> "$GITHUB_OUTPUT"
+      - env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build -t "$IMAGE" apps/server
+          docker push "$IMAGE"
+
+  build-sites:
+    name: Build the static apps
+    needs: plan
+    if: needs.plan.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SHA }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Build
+        run: |
+          mkdir sites
+          for app in web store marketing docs support; do
+            bun run --cwd "apps/$app" build
+            cp -r "apps/$app/dist" "sites/$app"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-sites
+          path: sites/
+          retention-days: 1
+
+  deploy-server:
+    name: Deploy server
+    needs: [plan, build-server, build-sites]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/deploy-server
+        with:
+          image: ${{ needs.build-server.outputs.image }}
+          environment: staging
+          label: ${{ needs.plan.outputs.label }}
+          host: ${{ vars.DEPLOY_HOST }}
+          user: ${{ vars.DEPLOY_USER }}
+          ssh-key: ${{ secrets.DEPLOY_SSH_KEY }}
+          api-url: ${{ vars.API_URL }}
+          port: ${{ vars.SERVER_PORT || '3000' }}
+
+  deploy-static:
+    name: Deploy ${{ matrix.app }}
+    needs: [plan, deploy-server]
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, store, marketing, docs, support]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/actions
+      - uses: actions/download-artifact@v4
+        with:
+          name: staging-sites
+          path: ${{ runner.temp }}/sites
+      - uses: ./.github/actions/deploy-static
+        with:
+          app: ${{ matrix.app }}
+          site-dir: ${{ runner.temp }}/sites/${{ matrix.app }}
+          environment: staging
+          label: ${{ needs.plan.outputs.label }}
+          host: ${{ vars.DEPLOY_HOST }}
+          user: ${{ vars.DEPLOY_USER }}
+          ssh-key: ${{ secrets.DEPLOY_SSH_KEY }}
+          api-url: ${{ vars.API_URL }}

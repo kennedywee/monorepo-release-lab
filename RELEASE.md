@@ -56,6 +56,7 @@ There are no separate Git tags for mobile, desktop, or the websites.
 | `release.yml` | Push of a tag `v*` | Validates the tag, runs `ci.yml`, builds each app in its own job from the tagged commit, pushes the server image to GHCR, writes the manifest, creates one GitHub Release | GitHub Release and container image only. **No deployment.** |
 | `preview.yml` | Pull requests with the `preview` label (every push), or manual with a PR number | Builds every app from the PR head and uploads test artifacts | No |
 | `deploy.yml` | Manual, with a tag, an environment, and the apps to deploy | Checks the manifest, waits at the approval gate, backs up and migrates the database, starts the server, then deploys the chosen web sites | Yes, after approval. Fails with `NOT DEPLOYED` if hosting is not configured. |
+| `staging.yml` | After CI passes on a push to `master`, or manual | Builds the server image and static apps from the `master` commit, then deploys them to the `staging` environment. Off until the repository variable `STAGING_ENABLED` is `true`. | Yes, to staging only. While off, the summary says `NOT DEPLOYED`. Never deploys to production. |
 | `mobile.yml` | Manual, with a tag | Sends an EAS Update, or submits an EAS build to a store testing track | Yes, after approval for production. Fails with `NOT PUBLISHED` if EAS is not configured. |
 
 ```mermaid
@@ -308,7 +309,7 @@ Files that differ between v1.0.0 and v1.0.1:
 
 ## Server migration and deployment sequence
 
-`deploy.yml` follows these steps. The container does **not** migrate on boot (`DB_PREPARE_ON_BOOT` is off by default).
+`deploy.yml` and `staging.yml` follow these steps. Both use the shared actions in `.github/actions/`. `staging.yml` has no approval gate and uses the label `master-<commit>` instead of a tag. The container does **not** migrate on boot (`DB_PREPARE_ON_BOOT` is off by default).
 
 1. **Approval gate.** For production, a required reviewer approves the `production` environment. If the release needs manual data preparation, the reviewer checks the runbook record first.
 2. **Pull** the image for the tag from GHCR. This is the image the release built and tested.
@@ -474,7 +475,8 @@ These items are configured in the workflows but need accounts or settings that t
 | Need | Used by | Setting |
 | --- | --- | --- |
 | GitHub environments `candidate` and `production`, with required reviewers on `production` | `deploy.yml`, `mobile.yml` | Repository settings → Environments |
-| `DEPLOY_HOST`, `DEPLOY_USER`, `API_URL` (variables) and `DEPLOY_SSH_KEY` (secret), per environment | `deploy.yml` | Environment variables and secrets |
+| Environment `staging`, and the repository variable `STAGING_ENABLED` set to `true` | `staging.yml` | Repository settings → Environments, and Variables |
+| `DEPLOY_HOST`, `DEPLOY_USER`, `API_URL` (variables) and `DEPLOY_SSH_KEY` (secret), per environment. Optional `SERVER_PORT` (default 3000), so several environments can share one host. | `deploy.yml`, `staging.yml` | Environment variables and secrets |
 | A host with Docker, `/etc/release-lab/<env>/server.env`, and a web server for `/srv/release-lab/<env>/<app>/current` | `deploy.yml` | Your infrastructure |
 | GHCR package write access | `release.yml` | Works with `GITHUB_TOKEN`. Make the package public, or give the host a pull token. |
 | `EXPO_TOKEN` (secret), `EAS_PROJECT_ID` (variable), store credentials in EAS | `release.yml`, `mobile.yml` | Expo account, `eas init` |
