@@ -105,7 +105,7 @@ bun run contract:types                  # 3. Regenerate packages/api types
 bun run typecheck                       # 4. Type-check web, store, and mobile
 ```
 
-CI runs these checks on every change. It also fails a pull request if the contract breaks compatibility with the last stable release. CI checks every app every time. The one exception is the server container build: on a PR, it runs only when `apps/server` changes, because the image is built from that folder alone. CI does not work out which apps a change affects.
+CI runs these checks on every change. It also fails a pull request if the contract breaks compatibility with the last stable release. CI checks every app every time. The one exception is the server container build: on a PR or a push to `master`, it runs only when `apps/server` changes, because the image is built from that folder alone. CI does not work out which apps a change affects.
 
 ### What the checks cannot tell you
 
