@@ -205,9 +205,14 @@ jobs:
         working-directory: apps/desktop
         # A missing secret becomes an empty string. On macOS, electron-builder reads an empty
         # CSC_LINK as a path and fails with "not a file", so unset it to build unsigned.
+        # With DESKTOP_WEB_URL, the app loads the hosted web app. Without it, the bundled copy.
+        env:
+          DESKTOP_WEB_URL: ${{ vars.DESKTOP_WEB_URL }}
         run: |
           if [ -z "$CSC_LINK" ]; then unset CSC_LINK CSC_KEY_PASSWORD; fi
-          bunx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version=${{ needs.prepare.outputs.version }}
+          web_url=()
+          if [ -n "$DESKTOP_WEB_URL" ]; then web_url=("-c.extraMetadata.webUrl=$DESKTOP_WEB_URL"); fi
+          bunx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version=${{ needs.prepare.outputs.version }} "${web_url[@]}"
       - name: Record status
         run: |
           mkdir -p status out
