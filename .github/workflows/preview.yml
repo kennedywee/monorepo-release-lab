@@ -1,7 +1,8 @@
 # PR preview: build every app for each pull request.
-# Hosting is not configured, so the result is a set of temporary test artifacts
-# (kept 7 days), not a URL. Run them locally with the commands in RELEASE.md.
-# A preview is not a release: it has no tag and is never deployed by this workflow.
+# The result is a set of temporary test artifacts (kept 7 days). Run them locally with the
+# commands in RELEASE.md. When Cloudflare Pages is configured, web and store also get
+# preview links, posted as a PR comment. They call the staging API.
+# A preview is not a release: it has no tag and never goes to staging or production.
 #
 # Opt-in: add the label "preview" to a pull request. That builds a preview now, and every
 # later push to the PR builds a new one. Remove the label to stop. A newer push cancels the
@@ -18,7 +19,9 @@ on:
         required: true
         type: number
 
-# The PR code may come from anyone. This workflow uses no secrets and only reads the repository.
+# The PR code may come from anyone. The "preview" job runs PR code, so it gets no secrets
+# and only reads the repository. The "links" job gets the Cloudflare token, but it runs no
+# PR code: it only uploads the built files.
 permissions:
   contents: read
 
@@ -56,6 +59,14 @@ jobs:
           done
           bun run --cwd apps/mobile build
           tar -czf preview/mobile-bundles.tar.gz -C apps/mobile/dist .
+      - name: Keep web and store for the preview links
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-sites-pr-${{ env.PR }}
+          path: |
+            apps/web/dist
+            apps/store/dist
+          retention-days: 1
       - name: Build server image
         run: |
           docker build -t "release-lab-server:pr-$PR" apps/server
@@ -75,3 +86,59 @@ jobs:
           name: preview-pr-${{ env.PR }}
           path: preview/
           retention-days: 7
+
+  links:
+    name: Preview links for PR ${{ github.event.pull_request.number || inputs.pr }}
+    needs: preview
+    # Fork PRs get no secrets, so they get no links. Their artifacts still build.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PREVIEW_API_URL: ${{ vars.PREVIEW_API_URL }}
+    steps:
+      - id: config
+        name: Check the Cloudflare configuration
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$PREVIEW_API_URL" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "NO PREVIEW LINKS. CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, or PREVIEW_API_URL is not configured. The artifacts are still available." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::NO PREVIEW LINKS. Cloudflare Pages is not configured."
+          fi
+      # upload-artifact drops the shared "apps/" folder, so files arrive as sites/<app>/dist.
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: preview-sites-pr-${{ env.PR }}
+          path: sites
+      - name: Upload to Cloudflare Pages
+        if: steps.config.outputs.ready == 'true'
+        # Each PR is a Pages branch, so its link stays the same across pushes:
+        # https://pr-<N>.<project>.pages.dev
+        run: |
+          {
+            echo "<!-- release-lab-preview -->"
+            echo "**Preview links** for PR #$PR, using the API at $PREVIEW_API_URL:"
+            echo
+          } > comment.md
+          for app in web store; do
+            jq -n --arg url "$PREVIEW_API_URL" '"window.APP_CONFIG = window.APP_CONFIG || { apiUrl: \($url | tojson) };"' -r > "sites/$app/dist/config.js"
+            npx --yes wrangler@4 pages deploy "sites/$app/dist" --project-name "release-lab-$app" --branch "pr-$PR" --commit-dirty=true
+            echo "- $app: https://pr-$PR.release-lab-$app.pages.dev" >> comment.md
+          done
+          echo >> comment.md
+          echo "These are previews, not deployments. They are not staging or production." >> comment.md
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment the links on the PR
+        if: steps.config.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body-file comment.md --edit-last --create-if-none
