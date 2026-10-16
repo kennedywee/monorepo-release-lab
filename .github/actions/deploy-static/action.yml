@@ -1,0 +1,60 @@
+# Deploy one built static app to one environment's host over SSH.
+# Used by deploy.yml (release tags) and staging.yml (master).
+# Only config.js changes per environment. Each label (tag or commit) gets its own
+# folder, and "current" is a symlink, so rollback is one command.
+name: Deploy static app
+description: Upload a built site and switch "current" to it.
+
+inputs:
+  app: {description: "App name (web, store, marketing, docs, support)", required: true}
+  site-dir: {description: "Folder with the built site", required: true}
+  environment: {description: "Environment name (candidate, production, staging)", required: true}
+  label: {description: "Folder name on the host, for example the tag", required: true}
+  host: {description: "DEPLOY_HOST", required: true}
+  user: {description: "DEPLOY_USER", required: true}
+  ssh-key: {description: "DEPLOY_SSH_KEY", required: true}
+  api-url: {description: "API URL written into config.js", required: true}
+
+runs:
+  using: composite
+  steps:
+    - name: Require deployment configuration
+      shell: bash
+      env:
+        DEPLOY_HOST: ${{ inputs.host }}
+        DEPLOY_USER: ${{ inputs.user }}
+        DEPLOY_SSH_KEY: ${{ inputs.ssh-key }}
+        API_URL: ${{ inputs.api-url }}
+        TARGET: ${{ inputs.environment }}
+        APP: ${{ inputs.app }}
+      run: |
+        if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$API_URL" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
+          echo "::error::NOT DEPLOYED. Hosting for $APP is not configured for $TARGET."
+          exit 1
+        fi
+    - name: Point config.js at the API
+      shell: bash
+      env:
+        SITE: ${{ inputs.site-dir }}
+        API_URL: ${{ inputs.api-url }}
+      run: |
+        if [ -f "$SITE/config.js" ]; then
+          jq -n --arg url "$API_URL" '"window.APP_CONFIG = window.APP_CONFIG || { apiUrl: \($url | tojson) };"' -r > "$SITE/config.js"
+        fi
+    - name: Upload and switch
+      shell: bash
+      env:
+        DEPLOY_HOST: ${{ inputs.host }}
+        DEPLOY_USER: ${{ inputs.user }}
+        DEPLOY_SSH_KEY: ${{ inputs.ssh-key }}
+        SITE: ${{ inputs.site-dir }}
+        TARGET: ${{ inputs.environment }}
+        APP: ${{ inputs.app }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        install -m 700 -d ~/.ssh
+        echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+        ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+        dir="/srv/release-lab/$TARGET/$APP"
+        rsync -a -e "ssh -i ~/.ssh/id_deploy" "$SITE/" "$DEPLOY_USER@$DEPLOY_HOST:$dir/$LABEL/"
+        ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" "ln -sfn '$dir/$LABEL' '$dir/current'"

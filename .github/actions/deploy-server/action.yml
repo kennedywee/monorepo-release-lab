@@ -1,0 +1,76 @@
+# Deploy the server image to one environment's host over SSH.
+# Used by deploy.yml (release tags) and staging.yml (master).
+# Order: back up the database, run migrations as their own step, start the new
+# container, then smoke test. Data repairs are never run here (see RELEASE.md).
+name: Deploy server
+description: Back up, migrate, start, and smoke test the server on one host.
+
+inputs:
+  image: {description: "Server image to run", required: true}
+  environment: {description: "Environment name (candidate, production, staging)", required: true}
+  label: {description: "Name for the database backup, for example the tag", required: true}
+  host: {description: "DEPLOY_HOST", required: true}
+  user: {description: "DEPLOY_USER", required: true}
+  ssh-key: {description: "DEPLOY_SSH_KEY", required: true}
+  api-url: {description: "Public API URL, used by the smoke test", required: true}
+  port: {description: "Host port for the server", required: false, default: "3000"}
+
+runs:
+  using: composite
+  steps:
+    - name: Require deployment configuration
+      shell: bash
+      env:
+        DEPLOY_HOST: ${{ inputs.host }}
+        DEPLOY_USER: ${{ inputs.user }}
+        DEPLOY_SSH_KEY: ${{ inputs.ssh-key }}
+        API_URL: ${{ inputs.api-url }}
+        TARGET: ${{ inputs.environment }}
+      run: |
+        if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$API_URL" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
+          echo "::error::NOT DEPLOYED. DEPLOY_HOST, DEPLOY_USER, API_URL, or DEPLOY_SSH_KEY is not configured for $TARGET."
+          exit 1
+        fi
+    - name: Configure SSH
+      shell: bash
+      env:
+        DEPLOY_HOST: ${{ inputs.host }}
+        DEPLOY_SSH_KEY: ${{ inputs.ssh-key }}
+      run: |
+        install -m 700 -d ~/.ssh
+        echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+        ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+    - name: Migrate and start
+      shell: bash
+      env:
+        DEPLOY_HOST: ${{ inputs.host }}
+        DEPLOY_USER: ${{ inputs.user }}
+        IMAGE: ${{ inputs.image }}
+        TARGET: ${{ inputs.environment }}
+        LABEL: ${{ inputs.label }}
+        PORT: ${{ inputs.port }}
+      # Image names must be lowercase. The repository owner may not be.
+      run: |
+        ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "${IMAGE,,}" "$TARGET" "$LABEL" "$PORT" <<'REMOTE'
+        set -euo pipefail
+        image=$1; target=$2; label=$3; port=$4
+        volume="release-lab-$target-storage"
+        env_file="/etc/release-lab/$target/server.env"
+        docker pull "$image"
+        # 1. Back up the SQLite database before any schema change.
+        docker run --rm -v "$volume:/rails/storage" "$image" \
+          sqlite3 /rails/storage/production.sqlite3 ".backup /rails/storage/backup-before-$label.sqlite3"
+        # 2. Run schema migrations as a separate step, with the new image.
+        docker run --rm --env-file "$env_file" -v "$volume:/rails/storage" "$image" ./bin/rails db:migrate
+        # 3. Replace the running container.
+        docker rm -f "release-lab-$target-server" || true
+        docker run -d --name "release-lab-$target-server" --restart unless-stopped \
+          --env-file "$env_file" -v "$volume:/rails/storage" -p "127.0.0.1:$port:3000" "$image"
+        REMOTE
+    - name: Smoke test
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api-url }}
+      run: |
+        for _ in 1 2 3 4 5; do curl -fsS "$API_URL/up" && break; sleep 5; done
+        curl -fsS "$API_URL/posts" | jq -e 'type == "array"'
