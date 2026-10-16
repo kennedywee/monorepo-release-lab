@@ -104,18 +104,26 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 2
-      # The image is built only from apps/server, so on a PR it is skipped when nothing
-      # there (or in this workflow) changed. Pushes to master and release tags always build,
-      # so base-image changes are still caught.
+      # The image is built only from apps/server, so on a PR or a push to master it is
+      # skipped when nothing there (or in this workflow) changed. Release tags always build.
       - name: Check for server changes
         id: changes
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # github.sha is the PR merge commit. Its first parent is the base branch.
+            base=HEAD^1
+          elif [ "$GITHUB_REF" = refs/heads/master ] && [ -n "$BEFORE" ] \
+            && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+            && git fetch --quiet --depth=1 origin "$BEFORE"; then
+            # A push can hold several commits, so compare with master before the push.
+            base=$BEFORE
+          else
             echo "build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # github.sha is the PR merge commit. Its first parent is the base branch.
-          if git diff --quiet HEAD^1 HEAD -- apps/server .github/workflows/ci.yml; then
+          if git diff --quiet "$base" HEAD -- apps/server .github/workflows/ci.yml; then
             echo "build=false" >> "$GITHUB_OUTPUT"
             echo "No changes in apps/server. Server image build skipped." >> "$GITHUB_STEP_SUMMARY"
           else
