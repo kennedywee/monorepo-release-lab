@@ -73,7 +73,7 @@ flowchart LR
 | `apps/web` | Staff app (React, Vite, TanStack). Create and edit posts. |
 | `apps/store` | Public blog. Same stack. Read posts and add comments. |
 | `apps/mobile` | Expo app. Read posts and add comments. |
-| `apps/desktop` | Electron wrapper around the web build. |
+| `apps/desktop` | Electron wrapper. Loads the hosted web app when a web URL is set, or the bundled web build. |
 | `apps/marketing`, `apps/docs`, `apps/support` | One static HTML page each. |
 | `packages/api` | Generated API types and a typed client. |
 | `.github/workflows` | CI and release workflows. |
@@ -87,7 +87,8 @@ The API has no authentication, and no client contains secrets.
 | Setting | Where | Default |
 | --- | --- | --- |
 | API URL for web and store | `public/config.js`, read at runtime | `http://localhost:3000` |
-| API URL for desktop | `API_URL` environment variable | `http://localhost:3000` |
+| Web app for desktop | `WEB_URL` environment variable, or `DESKTOP_WEB_URL` when `release.yml` packages it | the bundled copy of the web build |
+| API URL for desktop (bundled copy only) | `API_URL` environment variable | `http://localhost:3000` |
 | API URL for mobile | `EXPO_PUBLIC_API_URL` | the computer running Expo, port 3000 |
 | Allowed browser origins | `CORS_ORIGINS` on the server | `*` |
 | Database file | `DATABASE_PATH` on the server | `storage/development.sqlite3` |

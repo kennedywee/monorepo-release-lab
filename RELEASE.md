@@ -115,7 +115,7 @@ Within one tag, each artifact is built once. Environments receive that same arti
 | server | Yes. One image per tag, pushed to GHCR. | Runtime environment variables (`/etc/release-lab/<env>/server.env`). |
 | web, store | Yes. One tarball per tag. | `config.js` is replaced at deploy time. The JavaScript files do not change. |
 | marketing, docs, support | Yes. | No configuration. |
-| desktop | Yes. Packages the released **web** tarball, not a new web build. | `API_URL` when the app starts. |
+| desktop | Yes. Packages the released **web** tarball, not a new web build. | With `DESKTOP_WEB_URL` set at packaging time, the app loads the hosted web app, so it follows each web deploy without a new installer. Without it, the app loads the bundled copy and reads `API_URL` when it starts. |
 | mobile | **No. One build per environment.** | `EXPO_PUBLIC_API_URL` is compiled into the JavaScript bundle. Each `eas.json` profile (`preview`, `candidate`, `production`) is a separate build with its own URL and update channel. |
 
 When a separate build is required:
@@ -482,6 +482,7 @@ These items are configured in the workflows but need accounts or settings that t
 | A host with Docker, `/etc/release-lab/<env>/server.env`, and a web server for `/srv/release-lab/<env>/<app>/current` | `deploy.yml` | Your infrastructure |
 | GHCR package write access | `release.yml` | Works with `GITHUB_TOKEN`. Make the package public, or give the host a pull token. |
 | `EXPO_TOKEN` (secret), `EAS_PROJECT_ID` (variable), store credentials in EAS | `release.yml`, `mobile.yml` | Expo account, `eas init` |
+| `DESKTOP_WEB_URL` (variable, optional), for example the production web URL. Without it, desktop uses the bundled web build. | `release.yml` | Repository variables |
 | `DESKTOP_CSC_LINK`, `DESKTOP_CSC_KEY_PASSWORD` (secrets) | `release.yml` | Code-signing certificates. Notarization on macOS needs more setup. |
 | Label `breaking-api-change-approved` | `ci.yml` | Repository labels |
 | Label `preview` | `preview.yml` | Repository labels |
